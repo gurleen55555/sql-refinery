@@ -69,3 +69,55 @@ def test_compare_results_detect_mismatch(db_conn):
     match, detail = compare_results(left, right)
     assert not match
     assert "Row mismatch" in detail
+
+
+def test_validate_rejects_insert():
+    result = validate_sql(
+        "INSERT INTO customers (customer_id, name) VALUES (4, 'Test')"
+    )
+    assert not result.ok
+
+
+def test_validate_rejects_update():
+    result = validate_sql(
+        "UPDATE customers SET name = 'Changed' WHERE customer_id = 1"
+    )
+    assert not result.ok
+
+
+def test_validate_rejects_drop_table():
+    result = validate_sql("DROP TABLE customers")
+    assert not result.ok
+
+
+def test_validate_accepts_select_with_where():
+    result = validate_sql(
+        "SELECT customer_id, name FROM customers WHERE customer_id = 1"
+    )
+    assert result.ok
+    assert result.normalized_sql is not None
+
+
+def test_validate_accepts_forbidden_word_inside_string():
+    result = validate_sql("SELECT 'update' AS message")
+    assert result.ok
+
+
+def test_validate_rejects_copy():
+    result = validate_sql("COPY customers TO '/tmp/customers.csv'")
+    assert not result.ok
+
+
+def test_validate_rejects_attach():
+    result = validate_sql("ATTACH ':memory:' AS other_db")
+    assert not result.ok
+
+
+def test_validate_rejects_install():
+    result = validate_sql("INSTALL httpfs")
+    assert not result.ok
+
+
+def test_validate_rejects_load():
+    result = validate_sql("LOAD httpfs")
+    assert not result.ok

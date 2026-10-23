@@ -8,6 +8,7 @@ run without passing SQLGlot-based checks first.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -107,11 +108,15 @@ def create_connection(database: str = ":memory:") -> duckdb.DuckDBPyConnection:
     return conn
 
 
+
+
 def _strip_sql_comments(sql: str) -> str:
-    """Remove line and block comments before keyword scanning."""
+    """Remove ordinary SQL line and block comments."""
     sql = re.sub(r"/\*.*?\*/", " ", sql, flags=re.DOTALL)
     sql = re.sub(r"--[^\n]*", " ", sql)
     return sql
+
+
 
 
 def validate_sql(sql: str, dialect: str = "duckdb") -> ValidationResult:
@@ -150,13 +155,6 @@ def validate_sql(sql: str, dialect: str = "duckdb") -> ValidationResult:
             message="Only SELECT queries (optionally with WITH) are allowed.",
         )
 
-    lowered = _strip_sql_comments(cleaned).lower()
-    for keyword in _FORBIDDEN_KEYWORDS:
-        if re.search(rf"\b{re.escape(keyword)}\b", lowered):
-            return ValidationResult(
-                ok=False,
-                message=f"Forbidden keyword detected: {keyword.upper()}",
-            )
 
     normalized = statement.sql(dialect=dialect)
     return ValidationResult(ok=True, message="OK", normalized_sql=normalized)
@@ -203,12 +201,12 @@ def execute_query(
         return QueryResult(ok=False, error=str(exc), sql_executed=sql_to_run)
 
 
+
+
 def compare_results(left: QueryResult, right: QueryResult) -> tuple[bool, str]:
     """
-    Compare two successful query results for semantic equality.
-
-    Row order is ignored unless the same ordered rows appear in both sets.
-    Column order must match.
+    Compare successful query results, preserving duplicate-row counts.
+    Row order is ignored; column order and duplicate counts must match.
     """
     if not left.ok or not right.ok:
         return False, "Both queries must execute successfully to compare."
@@ -216,15 +214,18 @@ def compare_results(left: QueryResult, right: QueryResult) -> tuple[bool, str]:
     if left.columns != right.columns:
         return False, f"Column mismatch: {left.columns} vs {right.columns}"
 
-    left_set = set(left.rows)
-    right_set = set(right.rows)
-    if left_set != right_set:
+    left_counts = Counter(left.rows)
+    right_counts = Counter(right.rows)
+
+    if left_counts != right_counts:
         return (
             False,
-            f"Row mismatch: {len(left_set)} unique rows vs {len(right_set)} unique rows.",
+            "Row mismatch: row values or duplicate counts differ "
+            f"({len(left.rows)} rows vs {len(right.rows)} rows).",
         )
 
-    if left.rows != right.rows and left_set == right_set:
+    if left.rows != right.rows:
         return True, "Same multiset of rows; order differs (treated as equivalent)."
 
     return True, "Results match."
+

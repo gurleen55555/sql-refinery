@@ -49,23 +49,33 @@ def main() -> None:
     original_sql = st.text_area("Original SQL", value=_DEFAULT_ORIGINAL, height=180)
     col_run, col_llm = st.columns(2)
 
-    optimized_sql = st.session_state.get("optimized_sql", "")
+    if "optimized_sql_area" not in st.session_state:
+        st.session_state["optimized_sql_area"] = _DEFAULT_ORIGINAL
 
+    if "rationale" not in st.session_state:
+        st.session_state["rationale"] = ""
+
+    
     with col_llm:
-        if st.button("Suggest rewrite (Nemotron)", disabled=not llm_configured(settings)):
+        if st.button(
+            "Suggest rewrite (Nemotron)",
+            disabled=not llm_configured(settings),
+        ):
             with st.spinner("Calling Nebius Token Factory..."):
                 suggestion = suggest_sql_rewrite(original_sql, settings=settings)
+
             if suggestion.ok and suggestion.optimized_sql:
-                st.session_state["optimized_sql"] = suggestion.optimized_sql
-                st.session_state["rationale"] = suggestion.rationale
-                optimized_sql = suggestion.optimized_sql
+                # Update the same state variable used by the text area.
+                st.session_state["optimized_sql_area"] = suggestion.optimized_sql
+                st.session_state["rationale"] = suggestion.rationale or ""
                 st.success(f"Received suggestion from {suggestion.model}")
             else:
+                st.session_state["rationale"] = ""
                 st.error(suggestion.error or "Unknown LLM error")
+
 
     optimized_sql = st.text_area(
         "Candidate SQL (editable)",
-        value=optimized_sql or original_sql,
         height=180,
         key="optimized_sql_area",
     )

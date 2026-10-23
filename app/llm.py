@@ -60,19 +60,44 @@ def build_client(settings: Settings | None = None) -> OpenAI:
     )
 
 
+
 def _extract_json_object(text: str) -> dict | None:
-    """Best-effort JSON parse from model text."""
+    """Extract a JSON object from a model response, including fenced output."""
     text = text.strip()
+
+    # First, try parsing the entire response.
     try:
-        return json.loads(text)
+        payload = json.loads(text)
+        return payload if isinstance(payload, dict) else None
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if not match:
-            return None
+        pass
+
+    # Handle responses wrapped in Markdown code fences.
+    cleaned = re.sub(
+        r"^\s*```(?:json)?\s*|\s*```\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    try:
+        payload = json.loads(cleaned)
+        return payload if isinstance(payload, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    # Find a JSON object inside surrounding explanatory text.
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", cleaned):
         try:
-            return json.loads(match.group(0))
+            payload, _ = decoder.raw_decode(cleaned[match.start():])
+            if isinstance(payload, dict):
+                return payload
         except json.JSONDecodeError:
-            return None
+            continue
+
+    return None
+
 
 
 def suggest_sql_rewrite(
