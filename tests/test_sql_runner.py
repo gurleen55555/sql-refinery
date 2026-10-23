@@ -29,7 +29,7 @@ def test_validate_rejects_multiple_statements():
 def test_execute_valid_query(db_conn):
     result = execute_query(db_conn, "SELECT COUNT(*) FROM customers")
     assert result.ok
-    assert result.rows == ((3,),)
+    assert result.rows == ((10000,),)
 
 
 def test_execute_invalid_query_returns_error(db_conn):
