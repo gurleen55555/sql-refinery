@@ -1,4 +1,5 @@
 
+
 """
 Safe DuckDB execution and result comparison for SQL-Refinery.
 
@@ -11,11 +12,14 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import duckdb
+import pandas as pd
 import sqlglot
 from sqlglot import exp
+
 
 
 @dataclass(frozen=True)
@@ -203,17 +207,94 @@ def seed_demo_database(conn: duckdb.DuckDBPyConnection) -> None:
         raise
 
 
+
 def create_connection(
     database: str = ":memory:",
+    *,
+    seed_demo: bool = True,
 ) -> duckdb.DuckDBPyConnection:
-    """Open DuckDB and load the controlled demo dataset."""
+    """Open DuckDB, optionally loading the controlled demo dataset."""
     conn = duckdb.connect(database=database, read_only=False)
-    try:
-        seed_demo_database(conn)
-    except Exception:
-        conn.close()
-        raise
+
+    if seed_demo:
+        try:
+            seed_demo_database(conn)
+        except Exception:
+            conn.close()
+            raise
+
     return conn
+
+
+def import_csv_tables(
+    conn: duckdb.DuckDBPyConnection,
+    uploaded_files: list,
+) -> dict[str, list[str]]:
+    """Import uploaded CSV files as tables into an in-memory DuckDB connection."""
+    import pandas as pd
+
+    imported_tables: dict[str, list[str]] = {}
+
+    for uploaded_file in uploaded_files:
+        filename = Path(uploaded_file.name).stem
+
+        # Convert the filename to a safe SQL table name.
+        table_name = re.sub(r"[^a-zA-Z0-9_]+", "_", filename).strip("_")
+        if not table_name:
+            table_name = "uploaded_table"
+
+        if table_name[0].isdigit():
+            table_name = f"table_{table_name}"
+
+        # Avoid overwriting a table if two files have the same name.
+        base_name = table_name
+        suffix = 2
+        while table_name.lower() in {
+            name.lower()
+            for name in conn.execute(
+                "SHOW TABLES"
+            ).fetchall()
+            for name in [name[0]]
+        }:
+            table_name = f"{base_name}_{suffix}"
+            suffix += 1
+
+        try:
+            uploaded_file.seek(0)
+            dataframe = pd.read_csv(uploaded_file)
+
+            if dataframe.empty and len(dataframe.columns) == 0:
+                raise ValueError("The CSV file has no columns.")
+
+            if len(dataframe.columns) == 0:
+                raise ValueError("The CSV file has no columns.")
+
+            # Register the DataFrame temporarily, then create a DuckDB table.
+            temporary_name = "_csv_import_dataframe"
+            conn.register(temporary_name, dataframe)
+            try:
+                quoted_table = '"' + table_name.replace('"', '""') + '"'
+                conn.execute(
+                    f"CREATE TABLE {quoted_table} AS "
+                    f"SELECT * FROM {temporary_name}"
+                )
+            finally:
+                conn.unregister(temporary_name)
+
+            imported_tables[table_name] = [
+                str(column)
+                for column in dataframe.columns
+            ]
+
+        except Exception as exc:
+            raise ValueError(
+                f"Could not import '{uploaded_file.name}': {exc}"
+            ) from exc
+
+    if not imported_tables:
+        raise ValueError("Please upload at least one CSV file.")
+
+    return imported_tables
 
 
 def _strip_sql_comments(sql: str) -> str:

@@ -14,6 +14,7 @@ from app.sql_runner import (
     compare_results,
     create_connection,
     execute_query,
+    import_csv_tables,
     validate_sql,
 )
 
@@ -690,6 +691,81 @@ with st.sidebar:
     st.markdown("#### Workspace")
     st.caption("Edit, validate, and compare SQL queries.")
 
+    
+    st.markdown("#### Database")
+
+    database_mode = st.radio(
+        "Choose data source",
+        options=["Demo database", "Upload CSV files"],
+        index=0,
+        key="database_mode",
+        help="Use the built-in sample data or import your own CSV tables.",
+    )
+
+    if database_mode == "Upload CSV files":
+        uploaded_files = st.file_uploader(
+            "Upload CSV files",
+            type=["csv"],
+            accept_multiple_files=True,
+            key="csv_uploads",
+            help=(
+                "Each CSV becomes a table named after its filename. "
+                "For example, customers.csv becomes customers."
+            ),
+        )
+
+        if uploaded_files:
+            upload_signature = tuple(
+                (file.name, file.size) for file in uploaded_files
+            )
+
+            if st.session_state.get("csv_upload_signature") != upload_signature:
+                custom_conn = None
+
+                old_conn = st.session_state.get("custom_db_connection")
+                if old_conn is not None:
+                    try:
+                        old_conn.close()
+                    except Exception:
+                        pass
+
+                try:
+                    custom_conn = create_connection(seed_demo=False)
+                    imported_tables = import_csv_tables(
+                        custom_conn,
+                        uploaded_files,
+                    )
+
+                    st.session_state["custom_db_connection"] = custom_conn
+                    st.session_state["custom_db_tables"] = imported_tables
+                    st.session_state["csv_upload_signature"] = upload_signature
+                    st.session_state["comparison"] = None
+
+                except Exception as exc:
+                    if custom_conn is not None:
+                        try:
+                            custom_conn.close()
+                        except Exception:
+                            pass
+
+                    st.session_state["custom_db_connection"] = None
+                    st.session_state["custom_db_tables"] = {}
+                    st.session_state["csv_upload_signature"] = None
+                    st.error(f"CSV import failed: {exc}")
+
+        imported_tables = st.session_state.get("custom_db_tables", {})
+
+        if imported_tables:
+            st.success(f"{len(imported_tables)} table(s) imported")
+
+            for table_name, columns in imported_tables.items():
+                with st.expander(f"Table: {table_name}"):
+                    st.caption("Columns")
+                    st.write(", ".join(columns))
+        else:
+            st.info("Upload one or more CSV files to create your database.")
+
+
     st.markdown("#### Benchmark settings")
 
     warmup_runs = st.selectbox(
@@ -1097,11 +1173,28 @@ def run_comparison(
 
     report["stage"] = "execution"
 
-    # Use a fresh sample database for each comparison.
+    
+    # Use the uploaded CSV database or the built-in demo database.
+    custom_mode = (
+        st.session_state.get("database_mode") == "Upload CSV files"
+    )
+
     conn = None
+    owns_connection = False
 
     try:
-        conn = create_connection()
+        if custom_mode:
+            conn = st.session_state.get("custom_db_connection")
+
+            if conn is None:
+                report["error"] = (
+                    "Upload at least one CSV file before comparing queries."
+                )
+                return report
+        else:
+            conn = create_connection()
+            owns_connection = True
+
 
         baseline_result = execute_query(conn, baseline_query)
         report["baseline_result"] = baseline_result
@@ -1208,12 +1301,14 @@ def run_comparison(
         report["error"] = f"Comparison failed: {exc}"
         return report
 
+    
     finally:
-        if conn is not None:
+        if owns_connection and conn is not None:
             try:
                 conn.close()
             except Exception:
                 pass
+
 
 
 if compare_clicked:
