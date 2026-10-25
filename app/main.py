@@ -1,5 +1,6 @@
 
 
+
 from __future__ import annotations
 
 import html
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import streamlit as st
+
+
 
 # Fix Python imports when deployed on Streamlit Cloud
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -836,7 +839,7 @@ with st.sidebar:
         st.success("AI configuration detected", icon="✅")
         st.caption("Nemotron/Nebius settings appear configured.")
     else:
-        st.warning("AI configuration not detected", icon="!")
+        st.warning("AI configuration not detected", icon="⚠️")
         st.caption(
             "Check your environment configuration and API credentials."
         )
