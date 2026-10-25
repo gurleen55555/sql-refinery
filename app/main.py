@@ -1,11 +1,19 @@
 
+
 from __future__ import annotations
 
 import html
 import time
+import sys
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
+
+# Fix Python imports when deployed on Streamlit Cloud
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from app.benchmark import benchmark_query, compare_benchmarks
 from app.config import llm_configured
@@ -17,6 +25,7 @@ from app.sql_runner import (
     import_csv_tables,
     validate_sql,
 )
+
 
 
 # ============================================================
@@ -768,21 +777,23 @@ with st.sidebar:
 
     st.markdown("#### Benchmark settings")
 
+   
     warmup_runs = st.selectbox(
         "Warmup executions",
         options=[0, 1, 2, 3],
-        index=1,
         help="Warmup executions are excluded from the recorded timings.",
         key="warmup_runs",
     )
 
+
+    
     timed_runs = st.select_slider(
         "Timed executions",
         options=[3, 5, 7, 10],
-        value=5,
         help="More executions can make median timings more stable.",
         key="benchmark_runs",
     )
+
 
     st.markdown(
         """
