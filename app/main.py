@@ -77,11 +77,32 @@ st.markdown(
         --canvas: {CANVAS};
     }}
 
+    
     html, body, [class*="css"] {{
         font-family: 'DM Sans', -apple-system, BlinkMacSystemFont,
-                     'Segoe UI', sans-serif;
-        color: var(--text);
+                    'Segoe UI', sans-serif;
+        color: #172B24 !important;
     }}
+
+    [data-testid="stAppViewContainer"],
+    [data-testid="stSidebar"],
+    [data-testid="stMarkdownContainer"],
+    [data-testid="stWidgetLabel"],
+    [data-testid="stCaptionContainer"] {{
+        color: #172B24 !important;
+    }}
+
+    h1, h2, h3, h4, h5, h6,
+    p, label {{
+        color: #172B24 !important;
+    }}
+
+    .stTextArea textarea,
+    .stTextInput input,
+    [data-baseweb="select"] * {{
+        color: #172B24 !important;
+    }}
+
 
     .stApp {{
         background: var(--canvas);
