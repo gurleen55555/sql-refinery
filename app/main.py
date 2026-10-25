@@ -420,7 +420,7 @@ st.markdown(
         gap: 8px;
     }}
 
-    ```css
+    
     /* ============================================================
     BUTTONS — CLEAN WHITE + GREEN THEME
     ============================================================ */
@@ -487,7 +487,7 @@ st.markdown(
         opacity: 1 !important;
         cursor: not-allowed;
     }}
-```
+
 
     /* Inputs */
 
