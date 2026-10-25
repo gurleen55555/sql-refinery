@@ -420,36 +420,62 @@ st.markdown(
         gap: 8px;
     }}
 
-    /* Buttons */
+    ```css
+    /* ============================================================
+    BUTTONS — CLEAN WHITE + GREEN THEME
+    ============================================================ */
 
     .stButton > button,
-    .stDownloadButton > button {{
-        border-radius: 9px;
-        min-height: 40px;
-        font-weight: 600;
+    .stDownloadButton > button {
+        background-color: #FFFFFF !important;
+        color: #116747 !important;
+        border: 1px solid #B8D8C5 !important;
+        border-radius: 9px !important;
+        min-height: 42px;
+        font-weight: 600 !important;
         font-size: 13px;
-        border: 1px solid var(--border);
-        transition: all 0.15s ease;
-    }}
+        transition: all 0.2s ease;
+    }
 
-    .stButton > button[kind="primary"] {{
-        background: var(--green);
-        color: white;
-        border: 1px solid var(--green);
-    }}
+    /* Primary action: Run comparison */
+    .stButton > button[kind="primary"] {
+        background-color: #16845B !important;
+        color: #FFFFFF !important;
+        border: 1px solid #16845B !important;
+    }
 
-    .stButton > button[kind="primary"]:hover {{
-        background: var(--green-dark);
-        border-color: var(--green-dark);
-        color: white;
-    }}
+    /* Primary action on hover */
+    .stButton > button[kind="primary"]:hover {
+        background-color: #116747 !important;
+        color: #FFFFFF !important;
+        border-color: #116747 !important;
+    }
 
+    /* Secondary buttons on hover */
     .stButton > button[kind="secondary"]:hover,
-    .stDownloadButton > button:hover {{
-        border-color: var(--green);
-        color: var(--green-dark);
-        background: var(--green-pale);
-    }}
+    .stDownloadButton > button:hover {
+        background-color: #E8F5EE !important;
+        color: #0B593D !important;
+        border-color: #16845B !important;
+    }
+
+    /* Keyboard focus */
+    .stButton > button:focus-visible,
+    .stDownloadButton > button:focus-visible {
+        outline: 2px solid #16845B !important;
+        outline-offset: 2px;
+    }
+
+    /* Disabled buttons */
+    .stButton > button:disabled,
+    .stDownloadButton > button:disabled {
+        background-color: #F0F3F1 !important;
+        color: #687871 !important;
+        border-color: #D8E1DB !important;
+        opacity: 1 !important;
+        cursor: not-allowed;
+    }
+```
 
     /* Inputs */
 
