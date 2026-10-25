@@ -18,7 +18,20 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from app.benchmark import benchmark_query, compare_benchmarks
+from app.batch import (
+    DEFAULT_BATCH_LIMIT,
+    MAX_BATCH_LIMIT,
+    enforce_batch_limit,
+    split_sql_queries,
+)
+
+
+from app.benchmark import (
+    benchmark_batch,
+    benchmark_query,
+    compare_benchmarks,
+)
+
 from app.config import llm_configured
 from app.llm import suggest_sql_rewrite
 from app.sql_runner import (
@@ -591,6 +604,9 @@ def initialize_state() -> None:
         "last_ai_message": None,
         "benchmark_runs": 5,
         "warmup_runs": 1,
+        "batch_sql": "",
+        "batch_rewrites": [],
+        "batch_comparisons": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -976,83 +992,55 @@ st.markdown(
 )
 
 
+
 # ============================================================
-# STEP 1 — SQL EDITORS
+# STEP 1 — SINGLE SQL EDITOR
 # ============================================================
 
 render_step(
     "01",
     "Query workspace",
-    "Compare your original query with a candidate optimization.",
+    "Enter one SQL query or multiple SQL statements to optimize.",
 )
 
-left_col, right_col = st.columns(2, gap="large")
+st.markdown(
+    """
+    <div class="editor-heading">
+        <div class="editor-icon neutral">01</div>
+        <div>
+            <div class="editor-title">SQL queries</div>
+            <div class="editor-description">
+                Enter one query or multiple semicolon-separated statements
+            </div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+batch_limit = st.number_input(
+    "Maximum queries to process",
+    min_value=1,
+    max_value=MAX_BATCH_LIMIT,
+    value=DEFAULT_BATCH_LIMIT,
+    step=1,
+    key="batch_limit",
+    help="Controls how many SQL statements can be processed at once.",
+)
 
 baseline_version = st.session_state.get("baseline_editor_version", 0)
-candidate_version = st.session_state.get("candidate_editor_version", 0)
 
-with left_col:
-    st.markdown(
-        """
-        <div class="editor-heading">
-            <div class="editor-icon neutral">01</div>
-            <div>
-                <div class="editor-title">Baseline query</div>
-                <div class="editor-description">
-                    Original SQL · Reference implementation
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+baseline_sql = sql_editor(
+    "SQL queries",
+    "baseline_sql",
+    f"baseline_editor_{baseline_version}",
+    height=400,
+)
 
-    baseline_sql = sql_editor(
-        "Baseline SQL",
-        "baseline_sql",
-        f"baseline_editor_{baseline_version}",
-    )
-
-    if st.button(
-        "Copy baseline to candidate",
-        key="copy_baseline",
-        use_container_width=True,
-    ):
-        st.session_state["candidate_sql"] = baseline_sql
-        st.session_state["candidate_editor_version"] = candidate_version + 1
-        st.rerun()
-
-with right_col:
-    st.markdown(
-        """
-        <div class="editor-heading">
-            <div class="editor-icon">02</div>
-            <div>
-                <div class="editor-title">Candidate query</div>
-                <div class="editor-description">
-                    Optimized SQL · Compare against the baseline
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    candidate_sql = sql_editor(
-        "Candidate SQL",
-        "candidate_sql",
-        f"candidate_editor_{candidate_version}",
-    )
-
-    if st.button(
-        "Reset candidate to baseline",
-        key="reset_candidate",
-        use_container_width=True,
-    ):
-        st.session_state["candidate_sql"] = baseline_sql
-        st.session_state["candidate_editor_version"] = candidate_version + 1
-        st.session_state["comparison"] = None
-        st.rerun()
+st.caption(
+    "For multiple queries, separate statements with semicolons. "
+    "The same editor works for a single query too."
+)
 
 
 # ============================================================
@@ -1104,63 +1092,118 @@ if not ai_ready:
 
 
 
+
 # ============================================================
-# AI REWRITE
+# AI REWRITE — SINGLE QUERY OR BATCH
 # ============================================================
 
 if ai_clicked:
-    baseline_sql = st.session_state.get("baseline_sql", "").strip()
+    raw_sql = st.session_state.get("baseline_sql", "").strip()
 
-    if not baseline_sql:
+    if not raw_sql:
         st.session_state["last_ai_error"] = (
-            "Enter a baseline SQL query first."
+            "Enter at least one SQL query first."
         )
         st.session_state["last_ai_message"] = None
+
     else:
         try:
-            with st.spinner("Asking Nemotron to suggest a SQL rewrite..."):
-                rewrite = suggest_sql_rewrite(baseline_sql)
+            # Split the editor contents into individual SQL statements.
+            queries = split_sql_queries(raw_sql)
 
-            if isinstance(rewrite, str):
-                rewritten_sql = rewrite.strip()
-                rationale = None
-                rewrite_error = None
-            else:
-                rewritten_sql = (
-                    safe_attr(rewrite, "optimized_sql")
-                    or safe_attr(rewrite, "sql")
-                    or safe_attr(rewrite, "rewritten_sql")
-                    or safe_attr(rewrite, "suggestion")
-                    or ""
-                )
-                rationale = safe_attr(rewrite, "rationale")
-                rewrite_error = safe_attr(rewrite, "error")
+            if not queries:
+                raise ValueError("No SQL statements were found.")
 
-                if not isinstance(rewritten_sql, str):
-                    rewritten_sql = ""
+            # Enforce the configurable batch limit.
+            queries = enforce_batch_limit(
+                queries,
+                int(batch_limit),
+            )
 
-                rewritten_sql = rewritten_sql.strip()
+            rewrites = []
 
-                if not rewritten_sql:
-                    raise ValueError(
-                        str(rewrite_error)
-                        if rewrite_error
-                        else "Nemotron returned no SQL. Check app/llm.py."
+            with st.spinner(
+                f"Generating AI rewrites for {len(queries)} query(s)..."
+            ):
+                progress = st.progress(0)
+                status = st.empty()
+
+                for index, original_sql in enumerate(queries, start=1):
+                    status.write(
+                        f"Rewriting query {index} of {len(queries)}..."
                     )
 
-            if not rewritten_sql:
-                raise ValueError("The AI returned an empty SQL rewrite.")
+                    try:
+                        rewrite = suggest_sql_rewrite(original_sql)
 
-            st.session_state["candidate_sql"] = rewritten_sql
-            st.session_state["candidate_editor_version"] = (
-                st.session_state.get("candidate_editor_version", 0) + 1
+                        if isinstance(rewrite, str):
+                            rewritten_sql = rewrite.strip()
+                            rationale = None
+                            rewrite_error = None
+                        else:
+                            rewritten_sql = (
+                                safe_attr(rewrite, "optimized_sql")
+                                or safe_attr(rewrite, "sql")
+                                or safe_attr(rewrite, "rewritten_sql")
+                                or safe_attr(rewrite, "suggestion")
+                                or ""
+                            )
+
+                            rationale = safe_attr(rewrite, "rationale")
+                            rewrite_error = safe_attr(rewrite, "error")
+
+                            if not isinstance(rewritten_sql, str):
+                                rewritten_sql = ""
+
+                            rewritten_sql = rewritten_sql.strip()
+
+                        if not rewritten_sql:
+                            raise ValueError(
+                                str(rewrite_error)
+                                if rewrite_error
+                                else "Nemotron returned an empty SQL rewrite."
+                            )
+
+                        rewrites.append({
+                            "index": index,
+                            "original_sql": original_sql,
+                            "rewritten_sql": rewritten_sql,
+                            "rationale": rationale,
+                            "error": None,
+                        })
+
+                    except Exception as exc:
+                        # Keep processing the remaining queries.
+                        rewrites.append({
+                            "index": index,
+                            "original_sql": original_sql,
+                            "rewritten_sql": "",
+                            "rationale": None,
+                            "error": str(exc),
+                        })
+
+                    progress.progress(index / len(queries))
+
+                status.empty()
+                progress.empty()
+
+            # Save results without changing the original editor contents.
+            st.session_state["batch_sql"] = raw_sql
+            st.session_state["batch_rewrites"] = rewrites
+            st.session_state["batch_comparisons"] = []
+            st.session_state["comparison"] = None
+
+            succeeded = sum(
+                1 for item in rewrites if not item["error"]
             )
+            failed = len(rewrites) - succeeded
+
             st.session_state["last_ai_error"] = None
             st.session_state["last_ai_message"] = (
-                "AI rewrite generated successfully. Review the candidate "
-                "SQL before running the comparison."
+                f"Processed {len(rewrites)} query(s): "
+                f"{succeeded} rewrite(s) succeeded, "
+                f"{failed} failed."
             )
-            st.session_state["last_ai_rationale"] = rationale
 
             st.rerun()
 
@@ -1175,11 +1218,34 @@ if st.session_state.get("last_ai_message"):
 if st.session_state.get("last_ai_error"):
     st.error(f"AI rewrite failed: {st.session_state['last_ai_error']}")
 
-if st.session_state.get("last_ai_rationale"):
-    with st.expander("View AI optimization rationale"):
-        st.write(st.session_state["last_ai_rationale"])
+# Display each original query and its rewrite.
+batch_rewrites = st.session_state.get("batch_rewrites", [])
 
-    
+if batch_rewrites:
+    st.markdown("### AI rewrite results")
+
+    for item in batch_rewrites:
+        with st.expander(
+            f"Query {item['index']}",
+            expanded=True,
+        ):
+            original_col, rewritten_col = st.columns(2, gap="large")
+
+            with original_col:
+                st.markdown("**Original SQL**")
+                st.code(item["original_sql"], language="sql")
+
+            with rewritten_col:
+                st.markdown("**Nemotron rewrite**")
+
+                if item["error"]:
+                    st.error(f"Rewrite failed: {item['error']}")
+                else:
+                    st.code(item["rewritten_sql"], language="sql")
+
+                    if item["rationale"]:
+                        st.markdown("**Optimization rationale**")
+                        st.write(item["rationale"])
 
 
 # ============================================================
@@ -1388,27 +1454,247 @@ def run_comparison(
                 pass
 
 
+def run_batch_comparison(
+    original_queries: list[str],
+    rewrites: list[dict[str, Any]],
+    warmups: int,
+    repetitions: int,
+) -> dict[str, Any]:
+    """Validate, compare, and benchmark an entire batch of SQL rewrites."""
+    report: dict[str, Any] = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "stage": "validation",
+        "error": None,
+        "equivalent": None,
+        "equivalence_message": None,
+        "baseline_validation": None,
+        "candidate_validation": None,
+        "baseline_result": None,
+        "candidate_result": None,
+        "baseline_benchmark": None,
+        "candidate_benchmark": None,
+        "benchmark_comparison": None,
+        "query_reports": [],
+        "batch_mode": True,
+    }
 
-if compare_clicked:
-    baseline_sql = st.session_state.get("baseline_sql", "").strip()
-    candidate_sql = st.session_state.get("candidate_sql", "").strip()
+    if not original_queries:
+        report["error"] = "Enter at least one SQL query."
+        return report
 
-    if not baseline_sql:
-        st.error("Please enter a baseline SQL query.")
-    elif not candidate_sql:
-        st.error("Please enter a candidate SQL query.")
-    else:
-        with st.spinner(
-            "Validating queries, checking results, and benchmarking..."
+    if len(original_queries) != len(rewrites):
+        report["error"] = (
+            "The number of original queries does not match the number "
+            "of AI rewrites. Generate the rewrites again."
+        )
+        return report
+
+    for index, (original, item) in enumerate(
+        zip(original_queries, rewrites), start=1
+    ):
+        if item.get("error") or not item.get("rewritten_sql", "").strip():
+            report["error"] = (
+                f"Query {index} has no valid AI rewrite. "
+                "Generate the missing rewrite before comparing."
+            )
+            return report
+
+        original_validation = validate_sql(original)
+        candidate_sql = item["rewritten_sql"].strip()
+        candidate_validation = validate_sql(candidate_sql)
+
+        if index == 1:
+            report["baseline_validation"] = original_validation
+            report["candidate_validation"] = candidate_validation
+
+        if not safe_attr(original_validation, "ok", False):
+            report["error"] = (
+                f"Original query {index} is invalid: "
+                f"{safe_attr(original_validation, 'message', 'Validation failed.')}"
+            )
+            return report
+
+        if not safe_attr(candidate_validation, "ok", False):
+            report["error"] = (
+                f"Rewritten query {index} is invalid: "
+                f"{safe_attr(candidate_validation, 'message', 'Validation failed.')}"
+            )
+            return report
+
+    report["stage"] = "execution"
+
+    custom_mode = (
+        st.session_state.get("database_mode") == "Upload CSV files"
+    )
+    conn = None
+    owns_connection = False
+
+    try:
+        if custom_mode:
+            conn = st.session_state.get("custom_db_connection")
+            if conn is None:
+                report["error"] = (
+                    "Upload at least one CSV file before comparing queries."
+                )
+                return report
+        else:
+            conn = create_connection()
+            owns_connection = True
+
+        candidate_queries = [
+            item["rewritten_sql"].strip() for item in rewrites
+        ]
+
+        all_equivalent = True
+
+        for index, (original, candidate) in enumerate(
+            zip(original_queries, candidate_queries), start=1
         ):
-            st.session_state["comparison"] = run_comparison(
-                baseline_sql,
-                candidate_sql,
-                int(warmup_runs),
-                int(timed_runs),
+            baseline_result = execute_query(conn, original)
+            if not safe_attr(baseline_result, "ok", False):
+                report["error"] = (
+                    f"Original query {index} failed: "
+                    f"{safe_attr(baseline_result, 'error', 'Execution failed.')}"
+                )
+                return report
+
+            candidate_result = execute_query(conn, candidate)
+            if not safe_attr(candidate_result, "ok", False):
+                report["error"] = (
+                    f"Rewritten query {index} failed: "
+                    f"{safe_attr(candidate_result, 'error', 'Execution failed.')}"
+                )
+                return report
+
+            equivalent, message = compare_results(
+                baseline_result, candidate_result
             )
 
+            report["query_reports"].append({
+                "index": index,
+                "original_sql": original,
+                "rewritten_sql": candidate,
+                "equivalent": equivalent,
+                "message": message,
+                "baseline_result": baseline_result,
+                "candidate_result": candidate_result,
+            })
+
+            if not equivalent:
+                all_equivalent = False
+
+        report["equivalent"] = all_equivalent
+        report["equivalence_message"] = (
+            f"All {len(original_queries)} query pair(s) returned equivalent results."
+            if all_equivalent
+            else "At least one query pair returned different results."
+        )
+
+        # Keep representative result objects for compatibility with the
+        # existing dashboard. The complete results remain in query_reports.
+        if report["query_reports"]:
+            first = report["query_reports"][0]
+            report["baseline_result"] = first["baseline_result"]
+            report["candidate_result"] = first["candidate_result"]
+
+        if not all_equivalent:
+            report["stage"] = "mismatch"
+            report["error"] = (
+                "Batch benchmarking was skipped because at least one "
+                "original/rewrite pair returned different results."
+            )
+            return report
+
+        report["stage"] = "benchmark"
+
+        baseline_benchmark = benchmark_batch(
+            conn,
+            original_queries,
+            warmup_runs=warmups,
+            timed_runs=repetitions,
+        )
+        report["baseline_benchmark"] = baseline_benchmark
+
+        if not safe_attr(baseline_benchmark, "ok", False):
+            report["error"] = (
+                "Original batch benchmark failed: "
+                f"{safe_attr(baseline_benchmark, 'error', 'Unknown error.')}"
+            )
+            return report
+
+        candidate_benchmark = benchmark_batch(
+            conn,
+            candidate_queries,
+            warmup_runs=warmups,
+            timed_runs=repetitions,
+        )
+        report["candidate_benchmark"] = candidate_benchmark
+
+        if not safe_attr(candidate_benchmark, "ok", False):
+            report["error"] = (
+                "Rewritten batch benchmark failed: "
+                f"{safe_attr(candidate_benchmark, 'error', 'Unknown error.')}"
+            )
+            return report
+
+        report["benchmark_comparison"] = compare_benchmarks(
+            baseline_benchmark, candidate_benchmark
+        )
+        report["stage"] = "complete"
+        return report
+
+    except Exception as exc:
+        report["error"] = f"Batch comparison failed: {exc}"
+        return report
+
+    finally:
+        if owns_connection and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+
+if compare_clicked:
+    raw_sql = st.session_state.get("baseline_sql", "").strip()
+    rewrites = st.session_state.get("batch_rewrites", [])
+
+    if not raw_sql:
+        st.session_state["last_ai_error"] = (
+            "Enter at least one SQL query before comparing."
+        )
         st.rerun()
+
+    try:
+        original_queries = split_sql_queries(raw_sql)
+        enforce_batch_limit(
+            original_queries,
+            int(st.session_state.get("batch_limit", DEFAULT_BATCH_LIMIT)),
+        )
+    except ValueError as exc:
+        st.session_state["last_ai_error"] = str(exc)
+        st.rerun()
+
+    if not rewrites:
+        st.session_state["last_ai_error"] = (
+            "Generate AI rewrites before running the comparison."
+        )
+        st.rerun()
+
+    with st.spinner(
+        "Validating queries, comparing results, and benchmarking..."
+    ):
+        st.session_state["comparison"] = run_batch_comparison(
+            original_queries,
+            rewrites,
+            int(warmup_runs),
+            int(timed_runs),
+        )
+
+    st.session_state["last_ai_error"] = None
+    st.rerun()
+
 
 
 # ============================================================
@@ -1442,12 +1728,13 @@ if not report:
 else:
     stage = report.get("stage")
     error = report.get("error")
+    batch_mode = report.get("batch_mode", False)
 
     # --------------------------------------------------------
     # Validation status
     # --------------------------------------------------------
 
-    st.markdown("#### Validation and correctness")
+    st.markdown("#### Batch validation and correctness" if batch_mode else "#### Validation and correctness")
 
     validation_col1, validation_col2, validation_col3 = st.columns(3)
 
@@ -1456,31 +1743,31 @@ else:
 
     with validation_col1:
         if safe_attr(baseline_validation, "ok", False):
-            st.success("Baseline SQL valid")
+            st.success("Original batch valid" if batch_mode else "Baseline SQL valid")
         elif baseline_validation is not None:
             st.error(
-                "Baseline SQL invalid: "
+                ("Original batch invalid: " if batch_mode else "Baseline SQL invalid: ")
                 + str(safe_attr(baseline_validation, "message", "Invalid"))
             )
         else:
-            st.info("Baseline validation pending")
+            st.info("Original batch validation pending" if batch_mode else "Baseline validation pending")
 
     with validation_col2:
         if safe_attr(candidate_validation, "ok", False):
-            st.success("Candidate SQL valid")
+            st.success("Rewritten batch valid" if batch_mode else "Candidate SQL valid")
         elif candidate_validation is not None:
             st.error(
-                "Candidate SQL invalid: "
+                ("Rewritten batch invalid: " if batch_mode else "Candidate SQL invalid: ")
                 + str(safe_attr(candidate_validation, "message", "Invalid"))
             )
         else:
-            st.info("Candidate validation pending")
+            st.info("Rewritten batch validation pending" if batch_mode else "Candidate validation pending")
 
     with validation_col3:
         if report.get("equivalent") is True:
-            st.success("Results are equivalent")
+            st.success("Batch results are equivalent" if batch_mode else "Results are equivalent")
         elif report.get("equivalent") is False:
-            st.error("Results differ")
+            st.error("Batch results differ" if batch_mode else "Results differ")
         else:
             st.info("Result equivalence pending")
 
@@ -1528,34 +1815,47 @@ else:
 
         with metric1:
             st.metric(
-                label="Baseline median",
+                label="Original batch median" if batch_mode else "Baseline median",
                 value=format_ms(baseline_ms),
-                help="Median time across recorded baseline executions.",
+                help="Median total execution time across recorded benchmark runs.",
             )
 
         with metric2:
             st.metric(
-                label="Candidate median",
+                label="Rewritten batch median" if batch_mode else "Candidate median",
                 value=format_ms(candidate_ms),
-                help="Median time across recorded candidate executions.",
+                help="Median total execution time across recorded benchmark runs.",
             )
 
         with metric3:
+            change_label = (
+                "Batch performance change"
+                if batch_mode
+                else "Performance change"
+            )
+
             if improvement_pct is None:
-                st.metric(label="Performance change", value="—")
+                st.metric(label=change_label, value="—")
             else:
                 st.metric(
-                    label="Performance change",
+                    label=change_label,
                     value=f"{improvement_pct:+.2f}%",
-                    delta=f"{improvement_pct:+.2f}% vs baseline",
+                    delta=(
+                        f"{improvement_pct:+.2f}% vs "
+                        f"{'original batch' if batch_mode else 'baseline'}"
+                    ),
                     delta_color="normal",
                     help=(
-                        "Positive means the candidate ran faster; "
+                        "Positive means the rewritten SQL ran faster; "
                         "negative means it ran slower."
                     ),
                 )
 
         with metric4:
+            speedup_label = (
+                "Batch speedup ratio" if batch_mode else "Speedup ratio"
+            )
+
             if (
                 baseline_ms is not None
                 and candidate_ms is not None
@@ -1563,35 +1863,48 @@ else:
             ):
                 speedup = float(baseline_ms) / float(candidate_ms)
                 st.metric(
-                    label="Speedup ratio",
+                    label=speedup_label,
                     value=f"{speedup:.2f}×",
-                    help="Baseline median divided by candidate median.",
+                    help="Original median divided by rewritten median.",
                 )
             else:
-                st.metric(label="Speedup ratio", value="—")
+                st.metric(label=speedup_label, value="—")
 
         if improvement_pct is not None:
             if improvement_pct > 0:
                 st.success(
-                    f"The candidate was {improvement_pct:.2f}% faster "
-                    "by median execution time in this benchmark."
+                    f"The {'rewritten batch' if batch_mode else 'candidate'} "
+                    f"was {improvement_pct:.2f}% faster by median execution "
+                    "time in this benchmark."
                 )
             elif improvement_pct < 0:
                 st.warning(
-                    f"The candidate was {abs(improvement_pct):.2f}% slower "
-                    "by median execution time in this benchmark."
+                    f"The {'rewritten batch' if batch_mode else 'candidate'} "
+                    f"was {abs(improvement_pct):.2f}% slower by median "
+                    "execution time in this benchmark."
                 )
             else:
-                st.info("Both queries have the same median execution time.")
+                st.info(
+                    "Both batches have the same median execution time."
+                    if batch_mode
+                    else "Both queries have the same median execution time."
+                )
 
-        # Chart data
-        st.markdown("#### Execution time comparison")
+            # Chart data
+            st.markdown(
+                "#### Total batch execution time"
+                if batch_mode
+                else "#### Execution time comparison"
+            )
 
         import pandas as pd
 
         chart_df = pd.DataFrame(
             {
-                "Query": ["Baseline", "Candidate"],
+                "Query": [
+                    "Original batch" if batch_mode else "Baseline",
+                    "Rewritten batch" if batch_mode else "Candidate",
+                ],
                 "Median execution time (ms)": [
                     float(baseline_ms),
                     float(candidate_ms),
@@ -1698,11 +2011,14 @@ else:
             f"Candidate median (ms): {candidate_ms}",
             f"Performance change (%): {improvement_pct}",
             "",
-            "BASELINE SQL",
+            "ORIGINAL SQL BATCH",
             st.session_state.get("baseline_sql", ""),
             "",
-            "CANDIDATE SQL",
-            st.session_state.get("candidate_sql", ""),
+            "AI REWRITES",
+            "\n\n".join(
+                item.get("rewritten_sql", "")
+                for item in st.session_state.get("batch_rewrites", [])
+            ),
         ]
 
         st.download_button(
@@ -1719,25 +2035,8 @@ else:
             "successfully, produce equivalent results, and complete benchmarking."
         )
 
-        # Allow inspecting result sets when execution succeeded but the
-        # queries differ or the benchmark could not be completed.
-        baseline_result = report.get("baseline_result")
-        candidate_result = report.get("candidate_result")
+        
 
-        if baseline_result is not None or candidate_result is not None:
-            st.markdown("#### Inspect executed results")
-
-            result_col1, result_col2 = st.columns(2, gap="large")
-
-            with result_col1:
-                with st.expander("Baseline result set", expanded=False):
-                    if baseline_result is not None:
-                        show_query_result("Baseline results", baseline_result)
-
-            with result_col2:
-                with st.expander("Candidate result set", expanded=False):
-                    if candidate_result is not None:
-                        show_query_result("Candidate results", candidate_result)
 
 
 # ============================================================

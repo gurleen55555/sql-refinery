@@ -116,3 +116,82 @@ def compare_benchmarks(
         return False, f"Candidate median is higher by {delta:.3f} ms on this run."
 
     return False, "Medians are equal on this run."
+
+
+def benchmark_batch(
+    conn: duckdb.DuckDBPyConnection,
+    queries: list[str],
+    *,
+    warmup_runs: int = 1,
+    timed_runs: int = 3,
+) -> BenchmarkResult:
+    """Benchmark the total execution time of a sequence of SQL statements."""
+    if not queries:
+        return BenchmarkResult(
+            ok=False,
+            sql="",
+            warmup_runs=warmup_runs,
+            timed_runs=timed_runs,
+            error="The SQL batch is empty.",
+        )
+
+    validated_queries: list[str] = []
+
+    for sql in queries:
+        validation = validate_sql(sql)
+        if not validation.ok:
+            return BenchmarkResult(
+                ok=False,
+                sql=sql,
+                warmup_runs=warmup_runs,
+                timed_runs=timed_runs,
+                error=validation.message,
+            )
+        validated_queries.append(validation.normalized_sql or sql)
+
+    def execute_batch() -> str | None:
+        for sql in validated_queries:
+            result = execute_query(conn, sql, validate=False)
+            if not result.ok:
+                return result.error or "A query in the batch failed."
+        return None
+
+    for _ in range(max(0, warmup_runs)):
+        error = execute_batch()
+        if error:
+            return BenchmarkResult(
+                ok=False,
+                sql="\n;\n".join(validated_queries),
+                warmup_runs=warmup_runs,
+                timed_runs=timed_runs,
+                error=error,
+            )
+
+    durations: list[float] = []
+
+    for _ in range(max(1, timed_runs)):
+        start = time.perf_counter()
+        error = execute_batch()
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+        if error:
+            return BenchmarkResult(
+                ok=False,
+                sql="\n;\n".join(validated_queries),
+                warmup_runs=warmup_runs,
+                timed_runs=timed_runs,
+                error=error,
+            )
+
+        durations.append(elapsed_ms)
+
+    return BenchmarkResult(
+        ok=True,
+        sql="\n;\n".join(validated_queries),
+        warmup_runs=warmup_runs,
+        timed_runs=timed_runs,
+        durations_ms=tuple(durations),
+        median_ms=statistics.median(durations),
+        mean_ms=statistics.mean(durations),
+    )
+
