@@ -425,24 +425,28 @@ st.markdown(
     BUTTONS — CLEAN WHITE + GREEN THEME
     ============================================================ */
 
+    
     .stButton > button,
     .stDownloadButton > button {{
-        background-color: #FFFFFF !important;
+        background-color: #E8F5EE !important;
         color: #116747 !important;
-        border: 1px solid #B8D8C5 !important;
-        border-radius: 9px !important;
-        min-height: 42px;
-        font-weight: 600 !important;
+        border-radius: 9px;
+        min-height: 40px;
+        font-weight: 600;
         font-size: 13px;
-        transition: all 0.2s ease;
+        border: 1px solid #B8D8C5 !important;
+        transition: all 0.15s ease;
     }}
 
+
     /* Primary action: Run comparison */
+    
     .stButton > button[kind="primary"] {{
         background-color: #16845B !important;
         color: #FFFFFF !important;
         border: 1px solid #16845B !important;
     }}
+
 
     /* Primary action on hover */
     .stButton > button[kind="primary"]:hover {{
@@ -452,12 +456,20 @@ st.markdown(
     }}
 
     /* Secondary buttons on hover */
-    .stButton > button[kind="secondary"]:hover,
+    
+    .stButton > button:hover,
     .stDownloadButton > button:hover {{
-        background-color: #E8F5EE !important;
-        color: #0B593D !important;
+        background-color: #D1E9DA !important;
+        color: #116747 !important;
         border-color: #16845B !important;
     }}
+
+    .stButton > button[kind="primary"]:hover {{
+        background-color: #116747 !important;
+        color: #FFFFFF !important;
+        border-color: #116747 !important;
+    }}
+
 
     /* Keyboard focus */
     .stButton > button:focus-visible,
@@ -479,14 +491,19 @@ st.markdown(
 
     /* Inputs */
 
-    [data-testid="stTextArea"] textarea {{
-        background: #FFFFFF;
-        border: 1px solid var(--border);
-        border-radius: 9px;
-        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-        font-size: 12px;
-        line-height: 1.6;
-    }}
+    
+[data-testid="stTextArea"] textarea {{
+    background: #FFFFFF !important;
+    color: #172B24 !important;
+    -webkit-text-fill-color: #172B24 !important;
+    caret-color: #172B24 !important;
+    border: 1px solid #B8D8C5 !important;
+    border-radius: 9px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+}}
+
 
     [data-testid="stTextArea"] textarea:focus {{
         border-color: var(--green);
