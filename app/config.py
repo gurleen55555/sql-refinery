@@ -10,6 +10,7 @@ import os
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
+import streamlit as st
 
 load_dotenv()
 
@@ -33,16 +34,42 @@ class Settings:
     benchmark_timed_runs: int
 
 
+
 def get_settings() -> Settings:
-    """Build settings from environment variables with safe defaults."""
+    """Build settings from environment variables or Streamlit secrets."""
+
+    def get_value(name: str, default: str | None = None) -> str | None:
+        # Environment variables take priority; useful for local development.
+        value = os.getenv(name)
+        if value:
+            return value
+
+        # Read Streamlit Community Cloud secrets when available.
+        try:
+            value = st.secrets.get(name, default)
+            return str(value) if value is not None else default
+        except Exception:
+            # Streamlit secrets may not be configured locally.
+            return default
+
     return Settings(
-        nebius_api_key=os.getenv("NEBIUS_API_KEY") or None,
-        nebius_base_url=os.getenv("NEBIUS_BASE_URL", DEFAULT_NEBIUS_BASE_URL),
-        nebius_model=os.getenv("NEBIUS_MODEL", DEFAULT_NEBIUS_MODEL),
-        duckdb_path=os.getenv("DUCKDB_PATH", ":memory:"),
-        sql_statement_timeout_ms=int(os.getenv("SQL_STATEMENT_TIMEOUT_MS", "5000")),
-        benchmark_warmup_runs=int(os.getenv("BENCHMARK_WARMUP_RUNS", "1")),
-        benchmark_timed_runs=int(os.getenv("BENCHMARK_TIMED_RUNS", "3")),
+        nebius_api_key=get_value("NEBIUS_API_KEY"),
+        nebius_base_url=get_value(
+            "NEBIUS_BASE_URL", DEFAULT_NEBIUS_BASE_URL
+        ),
+        nebius_model=get_value(
+            "NEBIUS_MODEL", DEFAULT_NEBIUS_MODEL
+        ),
+        duckdb_path=get_value("DUCKDB_PATH", ":memory:"),
+        sql_statement_timeout_ms=int(
+            get_value("SQL_STATEMENT_TIMEOUT_MS", "5000")
+        ),
+        benchmark_warmup_runs=int(
+            get_value("BENCHMARK_WARMUP_RUNS", "1")
+        ),
+        benchmark_timed_runs=int(
+            get_value("BENCHMARK_TIMED_RUNS", "3")
+        ),
     )
 
 
