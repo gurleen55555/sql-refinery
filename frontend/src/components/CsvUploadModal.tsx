@@ -1,3 +1,4 @@
+import { apiUrl } from "../api";
 import React, { useState, useRef } from "react";
 import { X, UploadCloud, FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
 
@@ -57,7 +58,7 @@ export const CsvUploadModal: React.FC<CsvUploadModalProps> = ({
     });
 
     try {
-      const res = await fetch("/api/upload-csv", {
+      const res = await fetch(apiUrl("/api/upload-csv"), {
         method: "POST",
         body: formData,
       });

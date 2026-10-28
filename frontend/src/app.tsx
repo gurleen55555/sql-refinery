@@ -1,3 +1,4 @@
+import { apiUrl } from "./api";
 import React, { useState, useEffect } from "react";
 import { Navbar } from "./components/Navbar";
 import { RefineryHero3D } from "./components/RefineryHero3D";
@@ -7,6 +8,7 @@ import { PerformanceReport, BenchmarkReport } from "./components/PerformanceRepo
 import { SchemaModal } from "./components/SchemaModal";
 import { CsvUploadModal } from "./components/CsvUploadModal";
 import { Info, CheckCircle2, AlertCircle } from "lucide-react";
+
 
 export const App: React.FC = () => {
   const [sql, setSql] = useState<string>(PRESETS[0].sql);
@@ -50,7 +52,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const res = await fetch("/api/status");
+        const res = await fetch(apiUrl("/api/status"));
         if (res.ok) {
           const data = await res.json();
           setBackendStatus({
