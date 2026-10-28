@@ -6,3 +6,6 @@ sqlglot>=25.0.0
 pytest>=8.0.0
 pandas>=2.0.0
 streamlit-ace
+fastapi
+uvicorn
+python-multipart
