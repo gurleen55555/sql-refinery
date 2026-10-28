@@ -103,7 +103,7 @@ export const App: React.FC = () => {
 
       for (let i = 0; i < queries.length; i++) {
         const q = queries[i];
-        const res = await fetch("/api/rewrite", {
+        const res = await fetch(apiUrl("/api/rewrite"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sql: q }),
@@ -165,7 +165,7 @@ export const App: React.FC = () => {
         const baseline = queries[0];
         const candidate = candidateSql.trim() || baseline;
 
-        const res = await fetch("/api/compare", {
+        const res = await fetch(apiUrl("/api/compare"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -201,7 +201,7 @@ export const App: React.FC = () => {
           };
         });
 
-        const res = await fetch("/api/batch-compare", {
+        const res = await fetch(apiUrl("/api/batch-compare"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
